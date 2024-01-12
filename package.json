@@ -1,4 +1,15 @@
 {
   "name": "timer",
-  "packageManager": "yarn@4.0.2"
+  "version": "0.0.4",
+  "type": "module",
+  "packageManager": "yarn@4.0.2",
+  "scripts": {
+    "dev": "ebx src/index.ts -wrs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.4",
+    "chalk": "*",
+    "ebx": "^0.1.2",
+    "typescript": "^5.3.3"
+  }
 }
