@@ -2,42 +2,47 @@ import {
   setTimeout as wait,
   setInterval as interval,
 } from "node:timers/promises";
+import { AbortError } from "./error";
 
 export function timer<X, T extends unknown[]>(
   cb: (out: X, ...params: T) => void,
   speed: (controller: AbortController) => AsyncIterable<X>
 ) {
   let controller: AbortController;
-  let isStarted = false;
   async function start(...params: T) {
-    isStarted = true;
     controller = new AbortController();
-    for await (const _ of speed(controller)) {
-      if (!isStarted) break;
-      cb(_, ...params);
+    try {
+      for await (const _ of speed(controller)) {
+        cb(_, ...params);
+      }
+    } catch (err) {
+      if (!AbortError.is(err)) {
+        throw err;
+      }
     }
   }
 
   function stop() {
-    isStarted = false;
     controller?.abort();
   }
   return [start, stop] as const;
 }
 
 export function delay<T>(time: number, value?: T) {
-  return async function* generator(): AsyncIterable<T> {
-    yield* interval<T>(time, value);
+  return async function* generator(
+    controller: AbortController
+  ): AsyncIterable<T> {
+    yield* interval<T>(time, value, { signal: controller.signal });
   };
 }
 
 export function random(min: number, max: number) {
   return async function* generator(controller: AbortController) {
     let t = 0;
-    while (controller.signal.aborted) {
+    while (true) {
       yield t;
       t = Math.floor(Math.random() * max) + min;
-      await wait(t);
+      await wait(t, undefined, { signal: controller.signal });
     }
   };
 }
@@ -47,7 +52,7 @@ export function easeIn(n: number, by = 10, infinite = true) {
   const inc = floor(abs(n / by)),
     init = min(n, 0),
     till = max(n, 0);
-  return async function* generator() {
+  return async function* generator(controller: AbortController) {
     let t = init;
     while (true) {
       if (t >= till) {
@@ -59,7 +64,7 @@ export function easeIn(n: number, by = 10, infinite = true) {
       t = t + inc;
       const value = abs(t);
       yield value;
-      await wait(value);
+      await wait(value, undefined, { signal: controller.signal });
     }
   };
 }
@@ -72,10 +77,10 @@ export function easeInOut(n: number, by = 10) {
   const i = Math.floor(n / 2);
   const eIn = easeIn(i, by, false);
   const eOut = easeOut(n - i, by, false);
-  return async function* generator() {
+  return async function* generator(controller: AbortController) {
     while (true) {
-      yield* eIn();
-      yield* eOut();
+      yield* eIn(controller);
+      yield* eOut(controller);
     }
   };
 }
@@ -83,9 +88,13 @@ export function easeInOut(n: number, by = 10) {
 export function debounce(ms: number) {
   let init = 0;
   let abort = new AbortController();
-  return async function* (): AsyncIterable<number> {
+  return async function* (controller: AbortController): AsyncIterable<number> {
     init++;
     abort.abort();
+    if (controller.signal.aborted) {
+      abort.abort();
+      throw new AbortError();
+    }
     try {
       abort = new AbortController();
       await wait(ms, undefined, { signal: abort.signal });
@@ -98,7 +107,12 @@ export function debounce(ms: number) {
 export function throttle(ms: number) {
   let init = 0;
   let prev = 0;
-  return async function* (): AsyncIterable<number> {
+  return async function* generator(
+    controller: AbortController
+  ): AsyncIterable<number> {
+    if (controller.signal.aborted) {
+      throw new AbortError();
+    }
     init++;
     let now = new Date().getTime();
     if (now - prev > ms) {
